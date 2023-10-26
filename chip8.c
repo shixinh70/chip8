@@ -238,18 +238,18 @@ void emulate_instruction(chip8_t* chip8){
     switch (category){
         case 0x00:  //0___ Start with 0
             if(chip8->inst.NN == 0XE0){
-                // 00E0 : Clear screen
+                // 00E0: Clear screen
                 DEBUG_PRINT("Clear screen\n");
                 memset(&(chip8->display[0]),0,sizeof(chip8->display)); //Set display[] to 0
 
             }else if(chip8->inst.NN == 0XEE){
-                // 00EE : Return subroutine
+                // 00EE: Return subroutine
                 DEBUG_PRINT("Return subroutine to address 0x%04X\n",*(chip8->stack_ptr-1));
                 // Set PC to last address from subroutine stack (pop off the address from the stack)
                 chip8->stack_ptr--; //move back to last (stack) address
                 chip8->PC = *(chip8->stack_ptr);
             }else{
-                EBUG_PRINT("Unimplemented opcode\n");
+                DEBUG_PRINT("Unimplemented opcode\n");
             }
             break;
         
@@ -258,13 +258,21 @@ void emulate_instruction(chip8_t* chip8){
             DEBUG_PRINT("Call subroutine at NNN\n");
             *chip8->stack_ptr = chip8->PC; // Store current address before jumping (Push the address on stack)
             chip8->stack_ptr ++ ;          // Move the pointer to next empty space
-            chip8->PC = chip8->inst.NNN;   // Set PC to subrouting to address NNN 
+            chip8->PC = chip8->inst.NNN;   // Set PC to subroutine's address NNN 
                                            // then next loop will execute opcode from NNN
             
             break;
 
+        case 0x06:
+            // 6XNN: Set register[X] to NN
+            DEBUG_PRINT("Set register V[%X] to NN (0x%02X)\n",chip8->inst.X,chip8->inst.NN);
+            chip8->V[chip8->inst.X] = chip8->inst.NN;
+            break;
         case 0X0A:
-            
+            // ANNN: Set index register (I) to NNN
+            DEBUG_PRINT("Set I to NNN (0x%04X)\n", chip8->inst.NNN);
+            chip8->I = chip8->inst.NNN;
+            break;
 
         default:
             DEBUG_PRINT("Unimplemented opcode\n");
