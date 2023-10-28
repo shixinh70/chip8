@@ -67,6 +67,8 @@ typedef struct {
 
 //set clear screen to background color
 void clear_screen(const config_t config, sdl_t sdl){
+    //RGBA will be 32bits, each 8bits represent R, G, B, A
+    //Take out each r, g ,b ,a value; 
     const uint8_t r = (uint8_t)(config.background_color>>24)&0xFF;
     const uint8_t g = (uint8_t)(config.background_color>>16)&0xFF;
     const uint8_t b = (uint8_t)(config.background_color>>8)&0xFF;
@@ -179,7 +181,37 @@ void final__cleanup(const sdl_t sdl){
 }
 
 //update screen with any changes
-void updatescreen(const sdl_t sdl){
+void updatescreen(const sdl_t sdl, config_t config, const chip8_t* chip8 ){
+    //Initialize SDL_Rect (draw a bit as a rectangle)
+    SDL_Rect rect = {.x = 0, .y = 0, .w = config.scale_factor, .h = config.scale_factor};
+
+    const uint8_t bg_r = (uint8_t)(config.background_color>>24)&0xFF;
+    const uint8_t bg_g = (uint8_t)(config.background_color>>16)&0xFF;
+    const uint8_t bg_b = (uint8_t)(config.background_color>>8)&0xFF;
+    const uint8_t bg_a = (uint8_t)(config.background_color>>0)&0xFF;
+
+    const uint8_t fg_r = (uint8_t)(config.foreground_color>>24)&0xFF;
+    const uint8_t fg_g = (uint8_t)(config.foreground_color>>16)&0xFF;
+    const uint8_t fg_b = (uint8_t)(config.foreground_color>>8)&0xFF;
+    const uint8_t fg_a = (uint8_t)(config.foreground_color>>0)&0xFF;
+
+    //Loops all the display pixels
+    for (uint32_t i=0;i<sizeof(chip8->display);i++){
+        //Translate index to 2D x,y
+        rect.x = (i % config.window_width) * config.scale_factor;
+        rect.y = (i / config.window_width) * config.scale_factor;
+
+        //If display[i] is on, show foreground color
+        //else draw background color
+        if(chip8->display[i]){
+            SDL_SetRenderDrawColor(sdl.renderer,fg_r, fg_g, fg_b, fg_a);
+            SDL_RenderFillRect(sdl.renderer,&rect);
+        }else{
+            SDL_SetRenderDrawColor(sdl.renderer,bg_r, bg_g, bg_b, bg_a);
+            SDL_RenderFillRect(sdl.renderer,&rect);
+        }
+
+    }
     SDL_RenderPresent(sdl.renderer); 
 }
 
@@ -218,8 +250,8 @@ void handle_input(chip8_t* chip8){
     }
 }
 //Emulate 1 chip-8 intruction
-void emulate_instruction(chip8_t* chip8){
-    //Get next opcode from ram
+void emulate_instruction(chip8_t* chip8, config_t* config){
+    //Get next intuction(16bits big-endian) and translate to opcode (little_endian)
     chip8->inst.opcode = (chip8->ram[chip8->PC])<<8| chip8->ram[chip8->PC+1]; //CHIP8 instruction is BIG-endian
     chip8->PC += 2 ; //Move to next opcode (but not exec)
     //Fill in intruction format, (Mask out useless bits)
@@ -268,12 +300,53 @@ void emulate_instruction(chip8_t* chip8){
             DEBUG_PRINT("Set register V[%X] to NN (0x%02X)\n",chip8->inst.X,chip8->inst.NN);
             chip8->V[chip8->inst.X] = chip8->inst.NN;
             break;
+
+        case 0x07:
+            //7XNN: Add const NN to register VX
+            DEBUG_PRINT("ADD register V[%X] by NN (0x%02X)\n",chip8->inst.X,chip8->inst.NN);
+            chip8->V[chip8->inst.X] += chip8->inst.NN;
+            break;
         case 0X0A:
             // ANNN: Set index register (I) to NNN
             DEBUG_PRINT("Set I to NNN (0x%04X)\n", chip8->inst.NNN);
             chip8->I = chip8->inst.NNN;
             break;
 
+        case 0X0D:
+            // DXYN: Draw a sprite which stored at I to I+7 (8bits), to (x,y) on display
+            //       for N rolls(height)
+            DEBUG_PRINT("Drawing %u lines sprites at V[%X](0x%02X),V[%X](0x%02X) from I (0x%04X)\n",
+                    chip8->inst.N,chip8->inst.X,chip8->V[chip8->inst.X],chip8->inst.Y,chip8->V[chip8->inst.Y],chip8->I);
+            chip8->V[0XF] = 0; //Initial VF to 0 (Set to 1 when collision)
+            uint8_t x = (chip8->V[chip8->inst.X] % config->window_width); // Clipped the over the monitor width
+            uint8_t y = (chip8->V[chip8->inst.Y] % config->window_height);// Clipped the over the monitor height
+            const uint8_t original_x = x; //Store the start x point
+            //Loop N lines in constant N
+            for(uint8_t i = 0;i < chip8->inst.N ;i++){
+                //Get next bytes/row of sprite data (but not to increment I)
+                const uint8_t sprite_data  = chip8->ram[chip8->I+i];
+                x = original_x;//Reset x
+                //Check if sprite data and display data was collision
+                for(int8_t j = 7;j>=0;j--){
+                    //Stop drawing if X hit the right edge of the screen
+
+                    bool* display_xy_pixel = &(chip8->display[y*config->window_width + x]);
+                    const bool sprite_bit = (sprite_data & (1<<j));
+                    //If collision (sprite_data==1 , and display's (x,y) pixel ==1)
+                    //then set the VF flag to 1
+                    if(sprite_bit && (*display_xy_pixel)){
+                        chip8->V[0XF] = 1;
+                    } 
+                    //Flipped the display' (x,y) pixel
+                    *display_xy_pixel ^= sprite_bit;
+                    //x has been mod ny width, so it at least will be width -1
+                    //must print one time, so check the edge at the end of the function.
+                    //If next x over the edge, then stop drawing
+                    if(++x >= config->window_width) break; 
+                }
+                if(++y >= config->window_height) break; //So does y
+            }
+            break;//break switch case(0x0D)
         default:
             DEBUG_PRINT("Unimplemented opcode\n");
             break; //Unimplemented opcode or error opcode
@@ -312,13 +385,13 @@ int main(int argc, char **argv){
         handle_input(&chip8);
         if (chip8.state == PAUSED) continue;
 
-        emulate_instruction(&chip8);
+        emulate_instruction(&chip8,&config);
 
         //Delay 60hz = 16.7ms
         SDL_Delay(16);
 
         //update window with changes
-        updatescreen(sdl);
+        updatescreen(sdl, config, &chip8);
     }
     //Final cleanup
     final__cleanup(sdl);
