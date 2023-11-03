@@ -5,4 +5,4 @@ debug:
 	gcc chip8.c -o chip8 $(CFLAGS) -DDEBUG
 
 clean:
-	rm chip8 *.o
+	rm chip8 *.o chip8

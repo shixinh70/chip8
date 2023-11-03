@@ -264,7 +264,6 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
     chip8->inst.X = (chip8->inst.opcode>>8) & 0X000F;//4bits
     chip8->inst.Y = (chip8->inst.opcode>>4) & 0X000F;//4bits
     int8_t category = (chip8->inst.opcode >>12) & 0X000F;
-
     // Emulate opcode
     DEBUG_PRINT("Address: 0x%04X, Opcode: 0x%04X, Description: ",chip8->PC-2,chip8->inst.opcode);
     switch (category){
@@ -285,6 +284,13 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             }
             break;
         
+        case 0x01:
+            //1NNN : Jump to address NNN
+            DEBUG_PRINT("Jump to address NNN (0x%04X)\n",chip8->inst.NNN);
+            chip8->PC = chip8->inst.NNN;
+        break;
+
+
         case 0x02:
             // Call subroutine at NNN
             DEBUG_PRINT("Call subroutine at NNN\n");
@@ -294,7 +300,31 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                                            // then next loop will execute opcode from NNN
             
             break;
+        case 0x03:
+            DEBUG_PRINT("Check if V%X (%02X)== NN (%02X), skip next instruction,\n",
+            chip8->inst.X, chip8->V[chip8->inst.X],chip8->inst.NN);
+            // 0x3XNN: Check if VX == NN, if so, skip the next instuction.
+            if(chip8->V[chip8->inst.X] == chip8->inst.NN){
+                chip8->PC +=2;
+            }
+            break;
 
+        case 0x04:
+            DEBUG_PRINT("Check if V%X (%02X)!= NN (%02X), skip next instruction,\n",
+            chip8->inst.X, chip8->V[chip8->inst.X],chip8->inst.NN);
+            // 0x4XNN: Check if VX == NN, if so, skip the next instuction.
+            if(chip8->V[chip8->inst.X] != chip8->inst.NN){
+                chip8->PC +=2;
+            }
+            break;
+        case 0x05:
+            DEBUG_PRINT("Check if V%X (%02X)== V%X (%02X), skip next instruction,\n",
+            chip8->inst.X, chip8->V[chip8->inst.X],chip8->inst.Y,chip8->V[chip8->inst.Y]);
+            // 0x5XY0: Check if VX == VY, if so, skip the next instuction.
+            if(chip8->V[chip8->inst.X] == chip8->V[chip8->inst.Y]){
+                chip8->PC +=2;
+            }
+            break;
         case 0x06:
             // 6XNN: Set register[X] to NN
             DEBUG_PRINT("Set register V[%X] to NN (0x%02X)\n",chip8->inst.X,chip8->inst.NN);
@@ -306,12 +336,128 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             DEBUG_PRINT("ADD register V[%X] by NN (0x%02X)\n",chip8->inst.X,chip8->inst.NN);
             chip8->V[chip8->inst.X] += chip8->inst.NN;
             break;
+
+        case 0x08:
+            // 0x8XY0: Set register VX = VY
+            switch(chip8->inst.N){
+                case 0x0:
+                    DEBUG_PRINT("SET V[%X] = V[%X](%02X)\n",
+                    chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.Y]);
+                    //0x8XY0: Set register VX = VY
+                    chip8->V[chip8->inst.X] = chip8->V[chip8->inst.Y];   
+                    break;
+                case 0x1:
+                    DEBUG_PRINT("SET V[%X] |= V[%X](%02X)\n Result: %02X",
+                    chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.Y], 
+                    chip8->V[chip8->inst.X] | chip8->V[chip8->inst.Y]);
+                    //0x8XY1: Set register VX |= VY
+                    chip8->V[chip8->inst.X] |= chip8->V[chip8->inst.Y];   
+                    break;
+                case 0x2:
+                    DEBUG_PRINT("SET V[%X] &= V[%X](%02X) Result: %02X\n",
+                    chip8->inst.X,chip8->inst.Y,chip8->V[chip8->inst.Y],
+                    chip8->V[chip8->inst.X] & chip8->V[chip8->inst.Y]);
+                    //0x8XY2: Set register VX &= VY
+                    chip8->V[chip8->inst.X] &= chip8->V[chip8->inst.Y];   
+                    break;
+                case 0x3:
+                    DEBUG_PRINT("SET V[%X] ^= V[%X](%02X) Result: %02X\n",
+                    chip8->inst.X,chip8->inst.Y,chip8->V[chip8->inst.Y],
+                    chip8->V[chip8->inst.X] ^ chip8->V[chip8->inst.Y]);
+                    //0x8XY3: Set register VX ^= VY
+                    chip8->V[chip8->inst.X] ^= chip8->V[chip8->inst.Y];   
+                    break;
+                case 0x4:
+                    DEBUG_PRINT("SET V[%X](%02X) += V[%X](%02X), V[F] = %02X (1 if carry) Result: %02X\n",
+                    chip8->inst.X, chip8->V[chip8->inst.X], chip8->inst.Y, chip8->V[chip8->inst.Y], 
+                    ((uint16_t)chip8->V[chip8->inst.X] + (uint16_t)chip8->V[chip8->inst.Y] > 255),
+                    chip8->V[chip8->inst.X] + chip8->V[chip8->inst.Y]); 
+                    //0x8XY4: Set register VX += VY, set V[F] to 1 if carry(over 255).
+                    if((uint16_t)chip8->V[chip8->inst.X] + (uint16_t)chip8->V[chip8->inst.Y] > 255){
+                        //If carry, V[F] = 1
+                        chip8->V[0xF] = 1; 
+                    }else{
+                        //else, V[F] = 0
+                        chip8->V[0XF] = 0;
+                    }   
+                    chip8->V[chip8->inst.X] += chip8->V[chip8->inst.Y];
+                    break;
+                case 0x5:
+                    DEBUG_PRINT("SET V[%X](%02X) -= V[%X](%02X), V[F] = %02X (0 if borrow) Result: %02X\n",
+                    chip8->inst.X, chip8->V[chip8->inst.X], chip8->inst.Y, chip8->V[chip8->inst.Y],
+                    ((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]),
+                    chip8->V[chip8->inst.X] - chip8->V[chip8->inst.Y]); 
+                    //0x8XY5: Set register VX -= VY set V[F] to 0 if there is a borrow
+                    if((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]){
+                        // borrow V[F] = 0
+                        chip8->V[0xF] = 0; 
+                    }else{
+                        //V[X]<=V[Y]
+                        //no borrow V[F] = 1 
+                        chip8->V[0XF] = 1;
+                    } 
+                    chip8->V[chip8->inst.X] -= chip8->V[chip8->inst.Y];
+                       
+                    break;
+
+                case 0x6:
+                    DEBUG_PRINT("V[%X](%02X) >>= 1 Result: %02X",
+                    chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.X] >> 1);
+                    //0x8XY6: Store the lsb of VX in VF and shift VX to right by 1
+                    chip8->V[0XF] = chip8->V[chip8->inst.X] & 1;  // Take the lst bits to VF
+                    chip8->V[chip8->inst.X] >>= 1;   
+                    break;   
+
+                case 0x7:
+                    DEBUG_PRINT("SET V[%X](%02X) = V[%X](%02X) - V[%X](%02X), V[F] = %02X (0 if borrow) Result: %02X\n",
+                    chip8->inst.X, chip8->V[chip8->inst.X], chip8->inst.Y, chip8->V[chip8->inst.Y],
+                    chip8->inst.X, chip8->V[chip8->inst.X], 
+                    ((uint16_t)chip8->V[chip8->inst.X] >= (uint16_t)chip8->V[chip8->inst.Y]),
+                    chip8->V[chip8->inst.Y] - chip8->V[chip8->inst.X]); 
+                    //0x8XY7: Sets VX to VY - VX. VF is set to 0 when there's a borrow, and 1 when there is not.
+                    if((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]){ //VX < VY 
+                        // VY-VX, and VX<VY NO borrow V[F] = 0
+                        chip8->V[0xF] = 0; 
+                    }else{
+                        //If borrow V[f] = 0 
+                        chip8->V[0XF] = 1;
+                    } 
+                    chip8->V[chip8->inst.X] = chip8->V[chip8->inst.Y] - chip8->V[chip8->inst.X ];
+                    break;   
+                case 0xE:
+                    DEBUG_PRINT("V[%X](%02X) <<= 1 Result: %02X",
+                    chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.X] << 1);
+                    //0x8XYE: Set register VX <<= 1, store msb in VF
+                    chip8->V[0XF] = chip8->V[chip8->V[chip8->inst.X]] & 0b10000000; //store msb in VF
+                    chip8->V[chip8->inst.X] <<= 1; //Set register VX <<= 1
+                    break;   
+
+                default:
+                    break;
+            }
+            // 0X8XY1
+            // 0X8XY2
+            break;
+        case 0X09:
+            //Skips the next instruction if VX does not equal VY. 
+            //(Usually the next instruction is a jump to skip a code block);
+            DEBUG_PRINT("Check if V%X (%02X)!= V%X (%02X), skip next instruction,\n",
+            chip8->inst.X, chip8->V[chip8->inst.X],chip8->inst.Y,chip8->V[chip8->inst.Y]);
+            if(chip8->V[chip8->inst.X]!=chip8->V[chip8->inst.Y]){
+                chip8->I +=2;
+            }
+            break;
         case 0X0A:
             // ANNN: Set index register (I) to NNN
             DEBUG_PRINT("Set I to NNN (0x%04X)\n", chip8->inst.NNN);
             chip8->I = chip8->inst.NNN;
             break;
-
+        case 0X0B:
+            // BNNN: Jumps to the address NNN plus V0.
+            DEBUG_PRINT("Jumps to NNN(0x%04X) + V[0](%02X) Result:%04X \n",
+            chip8->inst.NNN,chip8->V[0],chip8->inst.NNN + chip8->V[0]);
+            chip8->I = chip8->inst.NNN + chip8->V[0];
+            break;
         case 0X0D:
             // DXYN: Draw a sprite which stored at I to I+7 (8bits), to (x,y) on display
             //       for N rolls(height)
