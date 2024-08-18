@@ -2,10 +2,10 @@
 ## Dependencies
 * gcc 
 * make
-* SDL2
+* SDL2 (libsdl2, libsdl2-dev)
 
 ```
-sudo apt-get install gcc make libsdl2-2.0-0
+sudo apt-get install gcc make libsdl2-2.0-0 libsdl2-dev
 ```
 
 ## Build
