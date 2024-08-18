@@ -1,5 +1,5 @@
 #include<stdio.h>
-#include"SDL2/SDL.h"
+#include"SDL.h"
 #include<stdlib.h> //exit()
 #include<stdint.h>
 #include<stdbool.h>
@@ -7,7 +7,7 @@
 #ifdef DEBUG
 #define DEBUG_PRINT(...) printf(__VA_ARGS__)
 #else
-#define DEBUG_PRINT(...) ((void)0) // 定义为空操作
+#define DEBUG_PRINT(...) ((void)0) 
 #endif
 
 //sdl container object
@@ -23,7 +23,7 @@ typedef struct {
     uint32_t window_width; // sdl window width
     uint32_t window_height;// sdl window height
     uint32_t scale_factor; // scale original chip8 pixel e.g 20x
-
+    uint32_t instructions_per_second;       // chip8 cpu clock hz
 
 }config_t;//all configuration attributes, easy for tracking
 
@@ -50,7 +50,7 @@ typedef struct {
     emulator_state_t state;
     uint8_t ram[4096];          //4K memory of chip8
     bool display[64*32];    //Emulate original chip8 resolution pixels
-    uint16_t stack[12];         //CHIP8 subroutine stack
+    uint16_t stack[16];         //CHIP8 subroutine stack
     uint16_t* stack_ptr;        //For use stack_ptr ++
     uint8_t V[16];              //Data register V0~VF
     uint16_t I ;                //Index register
@@ -66,7 +66,7 @@ typedef struct {
 
 
 //set clear screen to background color
-void clear_screen(const config_t config, sdl_t sdl){
+void init_screen(const config_t config, sdl_t sdl){
     //RGBA will be 32bits, each 8bits represent R, G, B, A
     //Take out each r, g ,b ,a value; 
     const uint8_t r = (uint8_t)(config.background_color>>24)&0xFF;
@@ -107,14 +107,14 @@ bool init_chip8(chip8_t* chip8, const char rom_name[]){
     const uint32_t entry_point = 0x200; //CHIP8 rom will be loaded to 0x200
     const uint8_t font[] = {
 	0xF0, 0x90, 0x90, 0x90, 0xF0,		// 0    11110000
-	0x20, 0x60, 0x20, 0x20, 0x70,		// 1    10010000
-	0xF0, 0x10, 0xF0, 0x80, 0xF0,		// 2    10010000
-	0xF0, 0x10, 0xF0, 0x10, 0xF0,		// 3    11110000
-	0x90, 0x90, 0xF0, 0x10, 0x10,		// 4
+	0x20, 0x60, 0x20, 0x20, 0x70,		// 1    1  10000
+	0xF0, 0x10, 0xF0, 0x80, 0xF0,		// 2    1  10000
+	0xF0, 0x10, 0xF0, 0x10, 0xF0,		// 3    1  10000
+	0x90, 0x90, 0xF0, 0x10, 0x10,		// 4    11110000
 	0xF0, 0x80, 0xF0, 0x10, 0xF0,		// 5    11110000
-	0xF0, 0x80, 0xF0, 0x90, 0xF0,		// 6    10000000
+	0xF0, 0x80, 0xF0, 0x90, 0xF0,		// 6    1   0000
 	0xF0, 0x10, 0x20, 0x40, 0x40,		// 7    11110000
-	0xF0, 0x90, 0xF0, 0x90, 0xF0,		// 8    00010000
+	0xF0, 0x90, 0xF0, 0x90, 0xF0,		// 8       10000
 	0xF0, 0x90, 0xF0, 0x10, 0xF0,		// 9    11110000
 	0xF0, 0x90, 0xF0, 0x90, 0x90,		// A
 	0xE0, 0x90, 0xE0, 0x90, 0xE0,		// B
@@ -166,6 +166,7 @@ bool set_config(config_t* config,const int argc,char** argv){
         .foreground_color = 0xFFFFFFFF,//RGBA (white)
         .background_color = 0X000000FF,//RGBA (black)
         .scale_factor = 20, //Default resolution will be 1280*640 
+        .instructions_per_second = 700, // 1 second chip 8 fetch how much instructions
     };
 
     //override default config
@@ -211,6 +212,9 @@ void updatescreen(const sdl_t sdl, config_t config, const chip8_t* chip8 ){
             SDL_RenderFillRect(sdl.renderer,&rect);
         }
 
+        //Draw ouline of every forground pixel
+        SDL_SetRenderDrawColor(sdl.renderer, bg_r, bg_g, bg_b, bg_a);
+        SDL_RenderDrawRect(sdl.renderer, &rect);
     }
     SDL_RenderPresent(sdl.renderer); 
 }
@@ -298,19 +302,20 @@ void handle_input(chip8_t* chip8){
 }
 //Emulate 1 chip-8 intruction
 void emulate_instruction(chip8_t* chip8, config_t* config){
-    //Get next intuction(16bits big-endian) and translate to opcode (little_endian)
-    chip8->inst.opcode = (chip8->ram[chip8->PC])<<8| chip8->ram[chip8->PC+1]; //CHIP8 instruction is BIG-endian
+    //Get next intuction(16bits big-endian) and translate to opcode
+    //CHIP8 instruction is BIG-endian
+    chip8->inst.opcode = (chip8->ram[chip8->PC])<<8| chip8->ram[chip8->PC+1]; 
     chip8->PC += 2 ; //Move to next opcode (but not exec)
-    //Fill in intruction format, (Mask out useless bits)
-    //Format = DXYN
     
-    //chip8->inst.category = (chip8->inst.opcode>>12) & 0X00F //category instrutions by first 4 bits (0-9, A-F) 
+    //Fill in intruction format, (Mask out useless bits)
     chip8->inst.NNN = chip8->inst.opcode & 0X0FFF;   //12bits
     chip8->inst.NN = chip8->inst.opcode & 0X00FF;    //8bits   
     chip8->inst.N = chip8->inst.opcode & 0X000F;     //4bits
     chip8->inst.X = (chip8->inst.opcode>>8) & 0X000F;//4bits
     chip8->inst.Y = (chip8->inst.opcode>>4) & 0X000F;//4bits
+    //category instrutions by first 4 bits (0-9, A-F)
     int8_t category = (chip8->inst.opcode >>12) & 0X000F;
+    
     // Emulate opcode
     DEBUG_PRINT("Address: 0x%04X, Opcode: 0x%04X, Description: ",chip8->PC-2,chip8->inst.opcode);
     switch (category){
@@ -385,9 +390,10 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             break;
 
         case 0x08:
-            // 0x8XY0: Set register VX = VY
+            
             switch(chip8->inst.N){
                 case 0x0:
+                    // 0x8XY0: Set register VX = VY
                     DEBUG_PRINT("SET V[%X] = V[%X](%02X)\n",
                     chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.Y]);
                     //0x8XY0: Set register VX = VY
@@ -398,7 +404,8 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.Y], 
                     chip8->V[chip8->inst.X] | chip8->V[chip8->inst.Y]);
                     //0x8XY1: Set register VX |= VY
-                    chip8->V[chip8->inst.X] |= chip8->V[chip8->inst.Y];   
+                    chip8->V[chip8->inst.X] |= chip8->V[chip8->inst.Y];
+                    chip8->V[0xF] = 0;   
                     break;
                 case 0x2:
                     DEBUG_PRINT("SET V[%X] &= V[%X](%02X) Result: %02X\n",
@@ -406,13 +413,15 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     chip8->V[chip8->inst.X] & chip8->V[chip8->inst.Y]);
                     //0x8XY2: Set register VX &= VY
                     chip8->V[chip8->inst.X] &= chip8->V[chip8->inst.Y];   
+                    chip8->V[0xF] = 0;
                     break;
                 case 0x3:
                     DEBUG_PRINT("SET V[%X] ^= V[%X](%02X) Result: %02X\n",
                     chip8->inst.X,chip8->inst.Y,chip8->V[chip8->inst.Y],
                     chip8->V[chip8->inst.X] ^ chip8->V[chip8->inst.Y]);
                     //0x8XY3: Set register VX ^= VY
-                    chip8->V[chip8->inst.X] ^= chip8->V[chip8->inst.Y];   
+                    chip8->V[chip8->inst.X] ^= chip8->V[chip8->inst.Y];
+                    chip8->V[0xF] = 0;   
                     break;
                 case 0x4:
                     DEBUG_PRINT("SET V[%X](%02X) += V[%X](%02X), V[F] = %02X (1 if carry) Result: %02X\n",
@@ -420,13 +429,8 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     ((uint16_t)chip8->V[chip8->inst.X] + (uint16_t)chip8->V[chip8->inst.Y] > 255),
                     chip8->V[chip8->inst.X] + chip8->V[chip8->inst.Y]); 
                     //0x8XY4: Set register VX += VY, set V[F] to 1 if carry(over 255).
-                    if((uint16_t)chip8->V[chip8->inst.X] + (uint16_t)chip8->V[chip8->inst.Y] > 255){
-                        //If carry, V[F] = 1
-                        chip8->V[0xF] = 1; 
-                    }else{
-                        //else, V[F] = 0
-                        chip8->V[0XF] = 0;
-                    }   
+                    
+                    chip8->V[0xF] = ((uint16_t)(chip8->V[chip8->inst.X] + chip8->V[chip8->inst.Y]) > 255);
                     chip8->V[chip8->inst.X] += chip8->V[chip8->inst.Y];
                     break;
                 case 0x5:
@@ -435,14 +439,7 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     ((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]),
                     chip8->V[chip8->inst.X] - chip8->V[chip8->inst.Y]); 
                     //0x8XY5: Set register VX -= VY set V[F] to 0 if there is a borrow
-                    if((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]){
-                        // borrow V[F] = 0
-                        chip8->V[0xF] = 0; 
-                    }else{
-                        //V[X]<=V[Y]
-                        //no borrow V[F] = 1 
-                        chip8->V[0XF] = 1;
-                    } 
+                    chip8->V[0xF] = (chip8->V[chip8->inst.X]>=chip8->V[chip8->inst.Y]);
                     chip8->V[chip8->inst.X] -= chip8->V[chip8->inst.Y];
                        
                     break;
@@ -451,32 +448,27 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     DEBUG_PRINT("V[%X](%02X) >>= 1 Result: %02X",
                     chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.X] >> 1);
                     //0x8XY6: Store the lsb of VX in VF and shift VX to right by 1
-                    chip8->V[0XF] = chip8->V[chip8->inst.X] & 1;  // Take the lst bits to VF
-                    chip8->V[chip8->inst.X] >>= 1;   
+                    chip8->V[0XF] = chip8->V[chip8->inst.Y] & 1;  // Take the lst bits to VF
+                    chip8->V[chip8->inst.X] = chip8->V[chip8->inst.Y] >> 1;   
                     break;   
 
                 case 0x7:
                     DEBUG_PRINT("SET V[%X](%02X) = V[%X](%02X) - V[%X](%02X), V[F] = %02X (0 if borrow) Result: %02X\n",
                     chip8->inst.X, chip8->V[chip8->inst.X], chip8->inst.Y, chip8->V[chip8->inst.Y],
                     chip8->inst.X, chip8->V[chip8->inst.X], 
-                    ((uint16_t)chip8->V[chip8->inst.X] >= (uint16_t)chip8->V[chip8->inst.Y]),
+                    ((uint16_t)chip8->V[chip8->inst.X] <= (uint16_t)chip8->V[chip8->inst.Y]),
                     chip8->V[chip8->inst.Y] - chip8->V[chip8->inst.X]); 
                     //0x8XY7: Sets VX to VY - VX. VF is set to 0 when there's a borrow, and 1 when there is not.
-                    if((uint16_t)chip8->V[chip8->inst.X] < (uint16_t)chip8->V[chip8->inst.Y]){ //VX < VY 
-                        // VY-VX, and VX<VY NO borrow V[F] = 0
-                        chip8->V[0xF] = 0; 
-                    }else{
-                        //If borrow V[f] = 0 
-                        chip8->V[0XF] = 1;
-                    } 
+                    chip8->V[0XF] = (chip8->V[chip8->inst.X] <= chip8->V[chip8->inst.Y]);
                     chip8->V[chip8->inst.X] = chip8->V[chip8->inst.Y] - chip8->V[chip8->inst.X ];
                     break;   
                 case 0xE:
                     DEBUG_PRINT("V[%X](%02X) <<= 1 Result: %02X",
                     chip8->inst.X, chip8->inst.Y, chip8->V[chip8->inst.X] << 1);
                     //0x8XYE: Set register VX <<= 1, store msb in VF
-                    chip8->V[0XF] = chip8->V[chip8->V[chip8->inst.X]] & 0b10000000; //store msb in VF
-                    chip8->V[chip8->inst.X] <<= 1; //Set register VX <<= 1
+                    //VF is 8bit, so the msb will be VF & 2^7
+                    chip8->V[0XF] = (chip8->V[chip8->inst.Y] & 0x80)>>7; //store msb in VF
+                    chip8->V[chip8->inst.X] = chip8->V[chip8->inst.Y] << 1; //Set register VX <<= 1
                     break;   
 
                 default:
@@ -491,7 +483,7 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             DEBUG_PRINT("Check if V%X (%02X)!= V%X (%02X), skip next instruction,\n",
             chip8->inst.X, chip8->V[chip8->inst.X],chip8->inst.Y,chip8->V[chip8->inst.Y]);
             if(chip8->V[chip8->inst.X]!=chip8->V[chip8->inst.Y]){
-                chip8->I +=2;
+                chip8->PC +=2;
             }
             break;
         case 0X0A:
@@ -503,7 +495,7 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             // BNNN: Jumps to the address NNN plus V0.
             DEBUG_PRINT("Jumps to NNN(0x%04X) + V[0](%02X) Result:%04X \n",
             chip8->inst.NNN,chip8->V[0],chip8->inst.NNN + chip8->V[0]);
-            chip8->I = chip8->inst.NNN + chip8->V[0];
+            chip8->PC = chip8->inst.NNN + chip8->V[0];
             break;
         case 0X0C:
             // CXNN Sets VX to the result of a bitwise and operation on a random number (Typically: 0 to 255) and NN.
@@ -538,13 +530,14 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     } 
                     //Flipped the display' (x,y) pixel
                     *display_xy_pixel ^= sprite_bit;
-                    //x has been mod ny width, so it at least will be width -1
+                    //x has been mod by width, so it at least will be width -1
                     //must print one time, so check the edge at the end of the function.
                     //If next x over the edge, then stop drawing
                     if(++x >= config->window_width) break; 
                 }
                 if(++y >= config->window_height) break; //So does y
             }
+    
             break;//break switch case(0x0D)
 
         case 0X0E:
@@ -615,16 +608,41 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
                     chip8->I += chip8->V[chip8->inst.X];
                 break;
                 case 0X29:
+                    DEBUG_PRINT("Set the I to the font store in V[%X](%02X), which is %04X\n",
+                    chip8->inst.X, chip8->V[chip8->inst.X], chip8->V[chip8->inst.X] * 5);
                     //FX29: Sets I to the location of the sprite for the character in VX.
-                    //The start address of the character (I store the )
+                    //The start address of the character (Since I store the font 1 to F at the memory[0])
+                    //So the font of V[X]'s address will be V[X] *5 (Each font contains 5 rows) 
                     chip8->I = chip8->V[chip8->inst.X] * 5; 
 
                 break;
-                case 0X33:
+                case 0X33:{
+                    DEBUG_PRINT("Stores the binary-coded decimal representation of VX\n");
+                    //FX33 Stores the binary-coded decimal representation of VX,
+                    //with the hundredsu digit in memory at location in I, 
+                    //the tens digit at location I+1, and the ones digit at location I+2
+                    uint8_t tmp = chip8->V[chip8->inst.X];
+                    chip8->ram[chip8->I+2] = tmp%10; //the ones digit
+                    tmp/=10;
+                    chip8->ram[chip8->I+1] = tmp%10; //the tens digit
+                    tmp/=10;
+                    chip8->ram[chip8->I+0] = tmp; //the hundred digit
+                }
                 break;
                 case 0X55:
+                    DEBUG_PRINT("Stores V[0] to V[%X] from I(%04X) to I(%04X)\n",
+                    chip8->I, chip8->inst.X ,chip8->I + chip8->inst.X);
+                    //FX55 Stores from V0 to VX (including VX) in memory (I+0 - I+X), I itself unmodified.
+                    for(uint8_t i=0;i<=chip8->inst.X;i++)
+                        chip8->ram[chip8->I++] = chip8->V[i];
+                    
                 break;
                 case 0X65:
+                    DEBUG_PRINT("Load V[0] to V[%X] from I(%04X) to I(%04X)\n",
+                    chip8->I, chip8->inst.X ,chip8->I + chip8->inst.X);
+                    //FX65 Load  V0 to VX (including VX) from (I+0 - I+X), I itself unmodified.
+                    for(uint8_t i=0;i<=chip8->inst.X;i++)
+                        chip8->V[0+i] = chip8->ram[chip8->I++];
                 break;
                 default:
                 break;
@@ -636,10 +654,15 @@ void emulate_instruction(chip8_t* chip8, config_t* config){
             break; //Unimplemented opcode or error opcode
 
     }
-
-
 }
 
+void update_chip8_timer(chip8_t* chip8){
+    if(chip8->delay_timer>0)
+        chip8->delay_timer --;
+    if(chip8->audio_timer>0)
+        chip8->audio_timer --;
+        
+};
 int main(int argc, char **argv){
     
     // Uasage message for miss args
@@ -649,14 +672,14 @@ int main(int argc, char **argv){
     }
     //Initialize Config
     config_t config = {0};
-    set_config(&config,argc,argv);
+    set_config(&config,argc,argv);//Set some default config
 
     //Initialize SDL
     sdl_t sdl = {0};
     if(!init_sdl(&sdl,&config)) exit(EXIT_FAILURE);
 
     //Initial screen clear to background color;
-    clear_screen(config,sdl);
+    init_screen(config,sdl);
 
     //Initialize chip8 machine like ./chip8 rom_name
     chip8_t chip8 = {0};
@@ -665,21 +688,46 @@ int main(int argc, char **argv){
 
     //Initialize rand function with time seed 
     srand(time(NULL));
+    
 
+    //Get time()
     //Emulator main loop
     while(chip8.state!=QUIT){
         
         //handle user input
         handle_input(&chip8);
+        
         if (chip8.state == PAUSED) continue;
 
-        emulate_instruction(&chip8,&config);
+        
+        //Get time before instructions
+        //Since some intrcution may take longer time to proccess(like drawing the picture),
+        //SO the delay time should be dynamic (along with the intruction hadling time per frame ) 
+        uint64_t start_instructions_counts = SDL_GetPerformanceCounter();
+        
 
+        // If I want to cpu process n intructions/seconds, and we refresh display every second 1/60.
+        // so every frame we need to do n/60 instructions.
+        for(uint32_t i = 0; i< config.instructions_per_second / 60;i++){
+            emulate_instruction(&chip8,&config);
+
+        } 
+
+        //Get time after instructions
+        uint64_t end_instructions_counts = SDL_GetPerformanceCounter();
+
+
+        double instructions_cost_ms =
+        (double)(end_instructions_counts- start_instructions_counts) 
+         / SDL_GetPerformanceFrequency() * 1000; //to ms
+        
         //Delay 60hz = 16.7ms
-        SDL_Delay(16);
+        //If instrctions time cost has been over the 16.7, than don't delay , else complment to 16.67  
+        SDL_Delay((double)16.67 >= instructions_cost_ms ? (double)16.67 - instructions_cost_ms : 0);
 
-        //update window with changes
+        //update window with changes (60hz)
         updatescreen(sdl, config, &chip8);
+        update_chip8_timer(&chip8);
     }
     //Final cleanup
     final__cleanup(sdl);
